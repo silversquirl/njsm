@@ -1,0 +1,19 @@
+# njsm
+
+The NSM <-> JACK Session bridge.
+
+## What?
+
+njsm bridges Non Session Manager and JACK Session. This allows programs
+that support JACK Session (say, jalv) to run inside nsm-proxy and have
+their data saved using njsm.
+
+## Why?
+
+Because I use NSM, but some programs want JACK Session. njsm means we
+get the best of both worlds.
+
+## Status
+
+Concept. I've barely started work on this yet.
+
