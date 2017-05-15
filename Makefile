@@ -1,18 +1,21 @@
 CPP := g++
 
-LDFLAGS := -ljack
+LDFLAGS := -ljack -llo
 
-.PHONY: all clean dist-clean tag
+.PHONY: all clean dist-clean tag run-nsm
 all: njsm
-
-tag:
-	ctags -R .
 
 clean:
 	rm -f *.o
 
 dist-clean: clean
 	rm -f njsm
+
+tag:
+	ctags -R .
+
+run-nsm:
+	PATH=.:$$PATH non-session-manager
 
 njsm: njsm.o
 	$(CPP) -o $@ $< $(LDFLAGS)
