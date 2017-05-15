@@ -3,6 +3,7 @@
 #include <string>
 using namespace std;
 
+#include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
 
@@ -85,13 +86,7 @@ void NonJack::client_reg_cb(const char *name, int reg, void *saver)
 
 int main()
 {
-  sigset_t sigint_set;
-  sigemptyset(&sigint_set);
-  sigaddset(&sigint_set, SIGINT);
-
-  signal(SIGINT, [](int){
-      cout << endl << "Exiting..." << endl;
-      });
+  signal(SIGINT, [](int){ cout << endl << "Exiting..." << endl; });
 
   try {
     NonJack saver;
