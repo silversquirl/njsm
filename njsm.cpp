@@ -16,14 +16,15 @@ using namespace std;
 
 class NJSMException : public exception {
   public:
-    NJSMException(string msg) : message(msg) {}
+    NJSMException(string msg) : message(msg.c_str()) {}
+    NJSMException(const char *msg) : message(msg) {}
     virtual const char *what() const throw()
     {
-      return message.c_str();
+      return message;
     }
 
   protected:
-    string message;
+    const char *message;
 };
 
 class NJSMJackClient {
