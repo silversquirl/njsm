@@ -45,16 +45,21 @@ class NJSMJackClient {
 
 NJSMJackClient::NJSMJackClient()
 {
+  DEBUG("Initializing JACK connection");
+
   activated = false;
+  DEBUG("Creating JACK client");
   client = jack_client_open("NJSM", JackNoStartServer, nullptr);
 
   if (client == nullptr)
     throw NJSMException("Creating JACK client failed");
 
+  DEBUG("Adding client registration callback");
   jack_set_client_registration_callback(client, client_reg_cb, this);
 
   findPorts();
 
+  DEBUG("Activating JACK client");
   if (!jack_activate(client))
     activated = true;
   else
@@ -72,7 +77,9 @@ NJSMJackClient::~NJSMJackClient()
 
 void NJSMJackClient::findPorts()
 {
+  DEBUG("Detecting JACK ports");
   const char **ports = jack_get_ports(client, nullptr, nullptr, 0);
+  DEBUG("Adding clients to managed client set");
   string client_name;
   for (int i = 0; ports[i]; i++) {
     client_name = ports[i];
@@ -84,6 +91,7 @@ void NJSMJackClient::findPorts()
 void NJSMJackClient::client_reg_cb(const char *name, int reg, void *saver)
 {
   NJSMJackClient *me = reinterpret_cast<NJSMJackClient *>(saver);
+  DEBUG("New client detected");
   if (reg) {
     me->managed_clients.insert(name);
   } else {
@@ -105,6 +113,8 @@ class NJSMNonClient {
 
 NJSMNonClient::NJSMNonClient(char *nsm_url) : jack()
 {
+  DEBUG("Initializing Non connection");
+
   DEBUG("Creating OSC address");
   addr = lo_address_new_from_url(nsm_url);
   if (addr == nullptr) 
