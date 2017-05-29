@@ -40,7 +40,7 @@ class NJSMJackClient {
     unordered_set<string> managed_clients;
     bool activated;
 
-    void find_ports();
+    void findPorts();
 };
 
 NJSMJackClient::NJSMJackClient()
@@ -53,7 +53,7 @@ NJSMJackClient::NJSMJackClient()
 
   jack_set_client_registration_callback(client, client_reg_cb, this);
 
-  find_ports();
+  findPorts();
 
   if (!jack_activate(client))
     activated = true;
@@ -63,12 +63,14 @@ NJSMJackClient::NJSMJackClient()
 
 NJSMJackClient::~NJSMJackClient()
 {
+  DEBUG("Cleaning up JACK client");
   if (activated)
     jack_deactivate(client);
   jack_client_close(client);
+  DEBUG("JACK cleanup complete");
 }
 
-void NJSMJackClient::find_ports()
+void NJSMJackClient::findPorts()
 {
   const char **ports = jack_get_ports(client, nullptr, nullptr, 0);
   string client_name;
@@ -89,41 +91,40 @@ void NJSMJackClient::client_reg_cb(const char *name, int reg, void *saver)
   }
 }
 
-int main(int argc, char *argv[])
+class NJSMNonClient {
+  public:
+    NJSMNonClient(char *nsm_url);
+    ~NJSMNonClient();
+
+  protected:
+    lo_address addr;
+    lo_server server;
+
+    NJSMJackClient jack;
+};
+
+NJSMNonClient::NJSMNonClient(char *nsm_url) : jack()
 {
-  signal(SIGINT, [](int){ cout << endl << "Exiting..." << endl; });
-  signal(SIGTERM, [](int){ cout << endl << "Terminating..." << endl; });
-
-  char *nsm_url = getenv("NSM_URL");
-  if (nsm_url == nullptr) {
-    cerr << "NSM_URL is undefined" << endl;
-    return -1;
-  } else {
-    DEBUG("NSM_URL=" << nsm_url);
-  }
-
   DEBUG("Creating OSC address");
-  lo_address osc_addr = lo_address_new_from_url(nsm_url);
-  if (osc_addr == nullptr) {
-    cerr << "Error creating OSC address" << endl;
-    return -1;
-  }
-  DEBUG("Address created. Port: " << lo_address_get_port(osc_addr));
+  addr = lo_address_new_from_url(nsm_url);
+  if (addr == nullptr) 
+    throw NJSMException("Error creating OSC address");
+
+  DEBUG("Address created. Port: " << lo_address_get_port(addr));
 
   DEBUG("Creating OSC server");
-  lo_server osc_server = lo_server_new_with_proto(
+  server = lo_server_new_with_proto(
       nullptr, // Autodetect port
-      lo_address_get_protocol(osc_addr), // Use the same protocol as NSM
+      lo_address_get_protocol(addr), // Use the same protocol as NSM
       [](int num, const char *msg, const char *where){
-        cerr << "Error creating OSC server: " << msg << endl;
+        throw NJSMException("Error creating OSC Server");
       });
-  if (osc_server == nullptr) {
-    return -1;
-  }
+  if (server == nullptr)
+    throw NJSMException("Error creating OSC Server");
 
   bool ack = false;
   DEBUG("Registering /reply callback");
-  lo_server_add_method(osc_server, "/reply", "ssss",
+  lo_server_add_method(server, "/reply", "ssss",
     [](
       const char *path, const char *types,
       lo_arg **argv, int argc,
@@ -145,13 +146,37 @@ int main(int argc, char *argv[])
     &ack);
 
   DEBUG("Sending announce");
-  lo_send(osc_addr, "/nsm/server/announce", "sssiii",
-      "NJSM", "::", argv[0], 1, 2, getpid());
+  lo_send(addr, "/nsm/server/announce", "sssiii",
+      "NJSM", "::", "njsm", 1, 2, getpid());
 
-  while (!ack) lo_server_recv(osc_server);
+  while (!ack) lo_server_recv(server);
+
+  lo_server_del_method(server, "/reply", "ssss");
+}
+
+NJSMNonClient::~NJSMNonClient()
+{
+  DEBUG("Cleaning up Non client");
+  lo_server_free(server);
+  lo_address_free(addr);
+  DEBUG("Non cleanup complete");
+}
+
+int main(int argc, char *argv[])
+{
+  signal(SIGINT, [](int){ cout << endl << "Exiting..." << endl; });
+  signal(SIGTERM, [](int){ cout << endl << "Terminating..." << endl; });
+
+  char *nsm_url = getenv("NSM_URL");
+  if (nsm_url == nullptr) {
+    cerr << "NSM_URL is undefined" << endl;
+    return -1;
+  } else {
+    DEBUG("NSM_URL=" << nsm_url);
+  }
 
   try {
-    NJSMJackClient saver;
+    NJSMNonClient non(nsm_url);
     DEBUG("Waiting");
     pause();
   } catch (exception &e) {
