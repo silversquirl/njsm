@@ -15,5 +15,5 @@ get the best of both worlds.
 
 ## Status
 
-Concept. I've barely started work on this yet.
+Prototype. I've just about got something that almost works, kinda.
 

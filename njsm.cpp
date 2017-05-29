@@ -27,37 +27,42 @@ class NJSMException : public exception {
     const char *message;
 };
 
+class NJSMExitException : public NJSMException {
+  public:
+    NJSMExitException() : NJSMException("Exitting...") {}
+};
+
+class NJSMSaveException : public NJSMException {
+  public:
+    NJSMSaveException() : NJSMException("An error occurred while saving the JACK session") {}
+};
+
 class NJSMJackClient {
   public:
-    NJSMJackClient();
+    NJSMJackClient() : client(nullptr), activated(false), save_dir(nullptr) {}
     ~NJSMJackClient();
 
-  private:
-    static void client_reg_cb(const char *name, int reg, void *sess_saver);
+    void activate(const char *client_name);
+    void setSaveDir(char *path);
+    void save();
 
   protected:
     jack_client_t *client;
-    unordered_set<string> managed_clients;
     bool activated;
-
-    void findPorts();
+    char *save_dir;
 };
 
-NJSMJackClient::NJSMJackClient()
+void NJSMJackClient::activate(const char *client_name)
 {
+  if (activated) return;
+
   DEBUG("Initializing JACK connection");
 
-  activated = false;
   DEBUG("Creating JACK client");
-  client = jack_client_open("NJSM", JackNoStartServer, nullptr);
+  client = jack_client_open(client_name, JackNoStartServer, nullptr);
 
   if (client == nullptr)
     throw NJSMException("Creating JACK client failed");
-
-  DEBUG("Adding client registration callback");
-  jack_set_client_registration_callback(client, client_reg_cb, this);
-
-  findPorts();
 
   DEBUG("Activating JACK client");
   if (!jack_activate(client))
@@ -75,28 +80,27 @@ NJSMJackClient::~NJSMJackClient()
   DEBUG("JACK cleanup complete");
 }
 
-void NJSMJackClient::findPorts()
+void NJSMJackClient::setSaveDir(char *path)
 {
-  DEBUG("Detecting JACK ports");
-  const char **ports = jack_get_ports(client, nullptr, nullptr, 0);
-  DEBUG("Adding clients to managed client set");
-  string client_name;
-  for (int i = 0; ports[i]; i++) {
-    client_name = ports[i];
-    client_name = client_name.substr(0, client_name.find(":"));
-    managed_clients.insert(client_name);
-  }
+  DEBUG("Setting JACK session save directory");
+  save_dir = path;
 }
 
-void NJSMJackClient::client_reg_cb(const char *name, int reg, void *saver)
+void NJSMJackClient::save()
 {
-  NJSMJackClient *me = reinterpret_cast<NJSMJackClient *>(saver);
-  DEBUG("New client detected");
-  if (reg) {
-    me->managed_clients.insert(name);
-  } else {
-    me->managed_clients.erase(name);
+  DEBUG("Saving JACK session");
+
+  if (save_dir == nullptr)
+    throw NJSMException("The save directory must be set before saving");
+
+  jack_session_command_t *ret = jack_session_notify(client,
+      nullptr, JackSessionSave, save_dir);
+
+  for (jack_session_command_t *cmd = ret; cmd->uuid != nullptr; cmd++) {
+    if (cmd->flags != 0) throw NJSMSaveException();
   }
+
+  DEBUG("JACK session saved");
 }
 
 class NJSMNonClient {
@@ -104,14 +108,23 @@ class NJSMNonClient {
     NJSMNonClient(char *nsm_url);
     ~NJSMNonClient();
 
+    void mainLoop();
+
   protected:
     lo_address addr;
     lo_server server;
 
     NJSMJackClient jack;
+
+    void initCallbacks();
+    void announce();
+    void success(const char *path);
+
+    static int openCallback(const char *path, const char *types, lo_arg **argv, int argc, lo_message msg, void *data);
+    static int saveCallback(const char *path, const char *types, lo_arg **argv, int argc, lo_message msg, void *data);
 };
 
-NJSMNonClient::NJSMNonClient(char *nsm_url) : jack()
+NJSMNonClient::NJSMNonClient(char *nsm_url)
 {
   DEBUG("Initializing Non connection");
 
@@ -131,6 +144,37 @@ NJSMNonClient::NJSMNonClient(char *nsm_url) : jack()
       });
   if (server == nullptr)
     throw NJSMException("Error creating OSC Server");
+
+  initCallbacks();
+  announce();
+}
+
+NJSMNonClient::~NJSMNonClient()
+{
+  DEBUG("Cleaning up Non client");
+  lo_server_free(server);
+  lo_address_free(addr);
+  DEBUG("Non cleanup complete");
+}
+
+void NJSMNonClient::mainLoop()
+{
+  while (1) {
+    lo_server_recv(server);
+  }
+}
+
+void NJSMNonClient::initCallbacks()
+{
+  DEBUG("Adding OSC callbacks");
+
+  lo_server_add_method(server, "/nsm/client/open", "sss", openCallback, this);
+  lo_server_add_method(server, "/nsm/client/save", "", saveCallback, this);
+}
+
+void NJSMNonClient::announce()
+{
+  DEBUG("Announcing presence to NSM");
 
   bool ack = false;
   DEBUG("Registering /reply callback");
@@ -155,8 +199,9 @@ NJSMNonClient::NJSMNonClient(char *nsm_url) : jack()
     },
     &ack);
 
-  DEBUG("Sending announce");
-  lo_send(addr, "/nsm/server/announce", "sssiii",
+  DEBUG("Sending /nsm/server/announce");
+  lo_send_from(addr, server, LO_TT_IMMEDIATE,
+      "/nsm/server/announce", "sssiii",
       "NJSM", "::", "njsm", 1, 2, getpid());
 
   while (!ack) lo_server_recv(server);
@@ -164,18 +209,37 @@ NJSMNonClient::NJSMNonClient(char *nsm_url) : jack()
   lo_server_del_method(server, "/reply", "ssss");
 }
 
-NJSMNonClient::~NJSMNonClient()
+void NJSMNonClient::success(const char *path)
 {
-  DEBUG("Cleaning up Non client");
-  lo_server_free(server);
-  lo_address_free(addr);
-  DEBUG("Non cleanup complete");
+  lo_send_from(addr, server, LO_TT_IMMEDIATE, "/reply", "ss", path, "");
+}
+
+int NJSMNonClient::openCallback(const char *path, const char *types,
+    lo_arg **argv, int argc, lo_message msg, void *data)
+{
+  DEBUG("Opening session on NSM's request");
+  NJSMNonClient *me = reinterpret_cast<NJSMNonClient *>(data);
+  me->jack.activate(&argv[2]->s);
+  me->jack.setSaveDir(&argv[0]->s);
+  // me->jack.open();
+  me->success(path);
+  return 0;
+}
+
+int NJSMNonClient::saveCallback(const char *path, const char *types,
+    lo_arg **argv, int argc, lo_message msg, void *data)
+{
+  DEBUG("Saving session on NSM's request");
+  NJSMNonClient *me = reinterpret_cast<NJSMNonClient *>(data);
+  me->jack.save();
+  me->success(path);
+  return 0;
 }
 
 int main(int argc, char *argv[])
 {
-  signal(SIGINT, [](int){ cout << endl << "Exiting..." << endl; });
-  signal(SIGTERM, [](int){ cout << endl << "Terminating..." << endl; });
+  signal(SIGINT, [](int){ throw NJSMExitException(); });
+  signal(SIGTERM, [](int){ throw NJSMExitException(); });
 
   char *nsm_url = getenv("NSM_URL");
   if (nsm_url == nullptr) {
@@ -187,8 +251,10 @@ int main(int argc, char *argv[])
 
   try {
     NJSMNonClient non(nsm_url);
-    DEBUG("Waiting");
-    pause();
+    DEBUG("Running main event loop");
+    non.mainLoop();
+  } catch (NJSMExitException &e) {
+    cerr << e.what() << endl;
   } catch (exception &e) {
     cerr << e.what() << endl;
     return -1;

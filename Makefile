@@ -1,6 +1,7 @@
-CPP := g++
+CXX := clang -std=c++11
 
-LDFLAGS := -ljack -llo
+LDFLAGS := -lstdc++ -ljack -llo
+CXXFLAGS := -Wall
 
 .PHONY: all clean dist-clean tag run-nsm
 all: njsm
@@ -18,8 +19,8 @@ run-nsm:
 	PATH=.:$$PATH non-session-manager
 
 njsm: njsm.o
-	$(CPP) -o $@ $< $(LDFLAGS)
+	$(CXX) -o $@ $< $(LDFLAGS)
 
 %.o: %.cpp
-	$(CPP) -o $@ -c $<
+	$(CXX) -o $@ -c $< $(CXXFLAGS)
 
